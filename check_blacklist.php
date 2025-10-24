@@ -8,7 +8,7 @@ require_once "db_config.php";
 $valorInput = isset($_GET['valor']) ? trim($_GET['valor']) : null;
 
 // response genérico
-$response = ["blocked" => false];
+$response = false;
 
 if ($valorInput) {
 
@@ -31,7 +31,7 @@ if ($valorInput) {
 
   // Si hay resultados, marcar como bloqueado
   if ($stmt->rowCount() > 0) {
-    $response["blocked"] = true;
+    $response= true;
   }
 }
 
