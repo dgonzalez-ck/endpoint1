@@ -3,52 +3,66 @@ header("Content-Type: application/json; charset=UTF-8");
 header("Access-Control-Allow-Origin: *");
 
 // ------------------------------------------------------------
-// 1️⃣ Función auxiliar para enviar alerta por WhatsApp
+// 1️⃣ Cargar variables del entorno (.env)
+// ------------------------------------------------------------
+if (file_exists(__DIR__ . '/.env')) {
+    $env = parse_ini_file(__DIR__ . '/.env');
+    foreach ($env as $key => $value) {
+        putenv("$key=$value");
+    }
+}
+
+// ------------------------------------------------------------
+// 2️⃣ Función para enviar alerta vía Botmaker
 // ------------------------------------------------------------
 function sendWhatsAppAlert($message)
 {
-    // 🔹 Configuración de Twilio (reemplazá con tus credenciales reales)
-    $twilioSid = "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";  // SID de tu cuenta
-    $twilioToken = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";   // Token de autenticación
-    $twilioNumber = "whatsapp:+14155238886";             // Número de Twilio (sandbox o verificado)
+    $apiUrl = getenv('BOTMAKER_API_URL');
+    $token = getenv('BOTMAKER_TOKEN');
+    $numbers = explode(',', getenv('BOTMAKER_ALERT_NUMBERS'));
 
-    // 🔹 Números a los que se enviará la alerta (separados por comas)
-    $alertNumbers = [
-        "whatsapp:+573001112233",
-        "whatsapp:+573154221133"
-    ];
+    if (!$apiUrl || !$token || empty($numbers)) {
+        error_log("⚠️ Botmaker no configurado correctamente en .env");
+        return;
+    }
 
-    foreach ($alertNumbers as $to) {
-        $ch = curl_init();
+    foreach ($numbers as $number) {
+        $payload = json_encode([
+            "platform" => "whatsapp",
+            "message" => "⚠️ Alerta: $message",
+            "to" => trim($number)
+        ]);
 
-        curl_setopt($ch, CURLOPT_URL, "https://api.twilio.com/2010-04-01/Accounts/$twilioSid/Messages.json");
+        $ch = curl_init($apiUrl);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_USERPWD, "$twilioSid:$twilioToken");
-        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
-            "From" => $twilioNumber,
-            "To" => $to,
-            "Body" => "⚠️ Alerta: $message"
-        ]));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            "Content-Type: application/json",
+            "Authorization: Bearer $token"
+        ]);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
 
-        curl_exec($ch);
+        $response = curl_exec($ch);
+
+        if (curl_errno($ch)) {
+            error_log("❌ Error enviando alerta Botmaker: " . curl_error($ch));
+        } else {
+            error_log("✅ Alerta enviada a $number: $response");
+        }
+
         curl_close($ch);
     }
 }
 
 // ------------------------------------------------------------
-// 2️⃣ Intentar cargar la conexión a la base de datos
+// 3️⃣ Intentar conexión a base de datos
 // ------------------------------------------------------------
 try {
     require_once "db_config.php";
 } catch (Exception $e) {
-    // 🚨 Si falla la conexión, enviar alerta y responder error
     $errorMsg = "No se pudo conectar con la base de datos: " . $e->getMessage();
-
-    // Enviar mensaje de alerta por WhatsApp
     sendWhatsAppAlert($errorMsg);
 
-    // Devolver respuesta JSON de error
     echo json_encode([
         "error" => true,
         "message" => "Error de conexión con la base de datos"
@@ -57,7 +71,7 @@ try {
 }
 
 // ------------------------------------------------------------
-// 3️⃣ Procesamiento normal del endpoint (si la DB está disponible)
+// 4️⃣ Procesar el endpoint (si la DB está disponible)
 // ------------------------------------------------------------
 $valorInput = isset($_GET['valor']) ? trim($_GET['valor']) : null;
 $response = false;
@@ -85,13 +99,9 @@ try {
 
     echo json_encode($response);
 } catch (PDOException $e) {
-    // 🚨 Si hay error en la consulta o pérdida de conexión
     $errorMsg = "Error SQL o de conexión: " . $e->getMessage();
-
-    // Enviar alerta
     sendWhatsAppAlert($errorMsg);
 
-    // Devolver respuesta JSON de error
     echo json_encode([
         "error" => true,
         "message" => "No se pudo ejecutar la consulta en la base de datos"
