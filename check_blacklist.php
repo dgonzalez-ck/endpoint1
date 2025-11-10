@@ -13,24 +13,24 @@ if (file_exists(__DIR__ . '/.env')) {
 }
 
 // ------------------------------------------------------------
-// 2️⃣ Función para enviar alerta vía Botmaker
+// 2️⃣ Función para enviar alerta vía Botmaker (INTENT)
 // ------------------------------------------------------------
-function sendWhatsAppAlert($message)
+function sendWhatsAppAlert($errorMessage)
 {
-    $apiUrl = getenv('BOTMAKER_API_URL');
-    $token = getenv('BOTMAKER_TOKEN');
-    $numbers = explode(',', getenv('BOTMAKER_ALERT_NUMBERS'));
+    $apiUrl     = getenv('BOTMAKER_API_URL');
+    $token      = getenv('BOTMAKER_TOKEN');
+    $channelId  = getenv('BOTMAKER_CHANNEL_ID');
+    $numbers    = explode(',', getenv('BOTMAKER_ALERT_NUMBERS'));
+    $intentName = getenv('BOTMAKER_INTENT_NAME');
 
-    if (!$apiUrl || !$token || empty($numbers)) {
-        error_log("⚠️ Botmaker no configurado correctamente en .env");
-        return;
-    }
-
-    foreach ($numbers as $number) {
+    foreach ($numbers as $contactId) {
         $payload = json_encode([
-            "platform" => "whatsapp",
-            "message" => "⚠️ Alerta: $message",
-            "to" => trim($number)
+            "chat" => [
+                "channelId" => $channelId,
+                "contactId" => trim($contactId)
+            ],
+            "intentIdOrName" => $intentName,
+            "webhookPayload" => "alerta_bd_" . date('Y-m-d_H:i:s') . " | $errorMessage"
         ]);
 
         $ch = curl_init($apiUrl);
@@ -38,19 +38,24 @@ function sendWhatsAppAlert($message)
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             "Content-Type: application/json",
-            "Authorization: Bearer $token"
+            "access-token: $token"
         ]);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
 
-        $response = curl_exec($ch);
-
-        if (curl_errno($ch)) {
-            error_log("❌ Error enviando alerta Botmaker: " . curl_error($ch));
-        } else {
-            error_log("✅ Alerta enviada a $number: $response");
-        }
-
+        $response  = curl_exec($ch);
+        $httpCode  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $error     = curl_error($ch);
         curl_close($ch);
+
+        // Log de debug
+        file_put_contents('botmaker_log.txt',
+            date('Y-m-d H:i:s') . "\n".
+            "Payload: $payload\n".
+            "HTTP: $httpCode\n".
+            "Curl Error: $error\n".
+            "Response: $response\n\n",
+            FILE_APPEND
+        );
     }
 }
 
@@ -60,8 +65,11 @@ function sendWhatsAppAlert($message)
 try {
     require_once "db_config.php";
 } catch (Exception $e) {
-    $errorMsg = "No se pudo conectar con la base de datos: " . $e->getMessage();
-    sendWhatsAppAlert($errorMsg);
+    $msg = "No se pudo conectar con la base de datos: " . $e->getMessage();
+    sendWhatsAppAlert($msg);
+
+    // Esperar 2 segundos para que cURL termine antes de salir
+    sleep(2);
 
     echo json_encode([
         "error" => true,
@@ -71,7 +79,7 @@ try {
 }
 
 // ------------------------------------------------------------
-// 4️⃣ Procesar el endpoint (si la DB está disponible)
+// 4️⃣ Tu código de consulta (sin tocar)
 // ------------------------------------------------------------
 $valorInput = isset($_GET['valor']) ? trim($_GET['valor']) : null;
 $response = false;
@@ -79,11 +87,9 @@ $response = false;
 try {
     if ($valorInput) {
         if (filter_var($valorInput, FILTER_VALIDATE_EMAIL)) {
-            // 📧 Buscar en columna 'Correos'
             $sql = "SELECT 1 FROM Lista_negra WHERE FIND_IN_SET(:valor, Correos) AND Deleted = 0 LIMIT 1";
             $params = [":valor" => $valorInput];
         } else {
-            // 📱 Buscar en columna 'Telefonos'
             $phoneClean = preg_replace('/\D/', '', $valorInput);
             $sql = "SELECT 1 FROM Lista_negra WHERE FIND_IN_SET(:valor, Telefonos) AND Deleted = 0 LIMIT 1";
             $params = [":valor" => $phoneClean];
@@ -99,9 +105,9 @@ try {
 
     echo json_encode($response);
 } catch (PDOException $e) {
-    $errorMsg = "Error SQL o de conexión: " . $e->getMessage();
-    sendWhatsAppAlert($errorMsg);
-
+    $msg = "Error SQL o de conexión: " . $e->getMessage();
+    sendWhatsAppAlert($msg);
+    sleep(2);
     echo json_encode([
         "error" => true,
         "message" => "No se pudo ejecutar la consulta en la base de datos"

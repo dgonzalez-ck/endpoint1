@@ -1,1 +1,9 @@
+# Archivos sensibles
+
 db_config.php
+.env
+
+# Logs y backups
+*.log
+botmaker_log.txt
+*.bak
